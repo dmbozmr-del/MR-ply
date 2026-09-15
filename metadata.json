@@ -1,0 +1,6 @@
+{
+  "name": "MR",
+  "description": "تطبيق MR لتشغيل وإدارة الأغاني والتسجيلات من الهاتف - مشغل صوتي متكامل مع تقسيم المقاطع، معادل الصوت، وكلمات الأغاني",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
