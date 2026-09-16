@@ -152,21 +152,28 @@ export function parseTimestampsText(
   // Sort by start time
   tempItems.sort((a, b) => a.time - b.time);
 
-  // Generate segments with calculated end times
-  return tempItems.map((item, idx) => {
-    const startTime = item.time;
-    const nextTime = idx < tempItems.length - 1 ? tempItems[idx + 1].time : totalDuration || startTime + 180;
-    const endTime = Math.max(startTime + 1, Math.min(nextTime, totalDuration || nextTime));
+  // Generate segments with calculated end times strictly bounded within totalDuration
+  return tempItems
+    .filter((item) => totalDuration <= 0 || item.time < totalDuration)
+    .map((item, idx) => {
+      const startTime = Math.max(0, totalDuration > 0 ? Math.min(item.time, totalDuration - 1) : item.time);
+      const nextItemTime = idx < tempItems.length - 1 ? tempItems[idx + 1].time : undefined;
+      let endTime = nextItemTime !== undefined ? nextItemTime : (totalDuration > 0 ? totalDuration : startTime + 180);
+      if (totalDuration > 0) {
+        endTime = Math.min(totalDuration, Math.max(startTime + 0.5, endTime));
+      } else {
+        endTime = Math.max(startTime + 0.5, endTime);
+      }
 
-    return {
-      id: `seg-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`,
-      trackId,
-      title: item.title,
-      artist: item.artist,
-      startTime,
-      endTime,
-      color: getSegmentColor(idx),
-      createdAt: Date.now(),
-    };
-  });
+      return {
+        id: `seg-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`,
+        trackId,
+        title: item.title,
+        artist: item.artist,
+        startTime,
+        endTime,
+        color: getSegmentColor(idx),
+        createdAt: Date.now(),
+      };
+    });
 }

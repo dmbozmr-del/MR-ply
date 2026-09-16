@@ -38,7 +38,8 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
-  const [draggingHandle, setDraggingHandle] = useState<'start' | 'end' | null>(null);
+  const [draggingHandle, setDraggingHandle] = useState<'start' | 'end' | 'range' | null>(null);
+  const dragRangeAnchorRef = useRef<{ startXTime: number; initialRange: SelectionRange } | null>(null);
 
   // Generate synthetic waveform bars if not provided
   const peaks = useMemo(() => {
@@ -53,11 +54,19 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
     });
   }, [waveformPeaks]);
 
-  // Convert client X to time in seconds
-  const getTimeFromEvent = useCallback((e: React.MouseEvent | MouseEvent): number => {
+  // Convert client X to time in seconds (supporting both mouse and touch)
+  const getTimeFromEvent = useCallback((e: React.MouseEvent | MouseEvent | React.TouchEvent | TouchEvent): number => {
     if (!containerRef.current || duration <= 0) return 0;
     const rect = containerRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    let clientX = 0;
+    if ('touches' in e && e.touches.length > 0) {
+      clientX = e.touches[0].clientX;
+    } else if ('changedTouches' in e && e.changedTouches.length > 0) {
+      clientX = e.changedTouches[0].clientX;
+    } else if ('clientX' in e) {
+      clientX = (e as MouseEvent).clientX;
+    }
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
     const ratio = x / rect.width;
     return Math.max(0, Math.min(duration, ratio * duration));
   }, [duration]);
@@ -69,16 +78,6 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
     setHoverX(x);
     const time = (x / rect.width) * duration;
     setHoverTime(Math.max(0, Math.min(duration, time)));
-
-    if (isDraggingPlayhead) {
-      onSeek(Math.max(0, Math.min(duration, time)));
-    } else if (draggingHandle === 'start' && selectionRange) {
-      const newStart = Math.min(time, selectionRange.end - 0.5);
-      onSetSelectionRange({ start: Math.max(0, newStart), end: selectionRange.end });
-    } else if (draggingHandle === 'end' && selectionRange) {
-      const newEnd = Math.max(time, selectionRange.start + 0.5);
-      onSetSelectionRange({ start: selectionRange.start, end: Math.min(duration, newEnd) });
-    }
   };
 
   const handleMouseLeave = () => {
@@ -89,7 +88,16 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Only if not clicking a handle or button
+    // Only if clicking waveform background
+    if (e.target !== containerRef.current && !(e.target as HTMLElement).classList.contains('waveform-bg')) {
+      return;
+    }
+    const time = getTimeFromEvent(e);
+    setIsDraggingPlayhead(true);
+    onSeek(time);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
     if (e.target !== containerRef.current && !(e.target as HTMLElement).classList.contains('waveform-bg')) {
       return;
     }
@@ -99,31 +107,62 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   };
 
   useEffect(() => {
-    const handleGlobalMouseUp = () => {
+    const handleGlobalEnd = () => {
       setIsDraggingPlayhead(false);
       setDraggingHandle(null);
+      dragRangeAnchorRef.current = null;
     };
 
-    const handleGlobalMouseMove = (e: MouseEvent) => {
+    const handleGlobalMove = (e: MouseEvent | TouchEvent) => {
+      if (!isDraggingPlayhead && !draggingHandle) return;
+      if (e.cancelable && (draggingHandle || isDraggingPlayhead)) {
+        e.preventDefault();
+      }
+
+      const time = getTimeFromEvent(e);
+
       if (isDraggingPlayhead) {
-        const time = getTimeFromEvent(e);
         onSeek(time);
       } else if (draggingHandle === 'start' && selectionRange && duration > 0) {
-        const time = getTimeFromEvent(e);
         const newStart = Math.min(time, selectionRange.end - 0.5);
         onSetSelectionRange({ start: Math.max(0, newStart), end: selectionRange.end });
       } else if (draggingHandle === 'end' && selectionRange && duration > 0) {
-        const time = getTimeFromEvent(e);
         const newEnd = Math.max(time, selectionRange.start + 0.5);
         onSetSelectionRange({ start: selectionRange.start, end: Math.min(duration, newEnd) });
+      } else if (draggingHandle === 'range' && dragRangeAnchorRef.current && duration > 0) {
+        const { startXTime, initialRange } = dragRangeAnchorRef.current;
+        const delta = time - startXTime;
+        const rangeWidth = initialRange.end - initialRange.start;
+        let newStart = initialRange.start + delta;
+        let newEnd = initialRange.end + delta;
+
+        if (newStart < 0) {
+          newStart = 0;
+          newEnd = Math.min(duration, rangeWidth);
+        } else if (newEnd > duration) {
+          newEnd = duration;
+          newStart = Math.max(0, duration - rangeWidth);
+        }
+
+        onSetSelectionRange({
+          start: Math.max(0, newStart),
+          end: Math.min(duration, newEnd),
+        });
       }
     };
 
-    window.addEventListener('mouseup', handleGlobalMouseUp);
-    window.addEventListener('mousemove', handleGlobalMouseMove);
+    window.addEventListener('mouseup', handleGlobalEnd);
+    window.addEventListener('mousemove', handleGlobalMove);
+    window.addEventListener('touchend', handleGlobalEnd);
+    window.addEventListener('touchcancel', handleGlobalEnd);
+    window.addEventListener('touchmove', handleGlobalMove, { passive: false });
+
     return () => {
-      window.removeEventListener('mouseup', handleGlobalMouseUp);
-      window.removeEventListener('mousemove', handleGlobalMouseMove);
+      window.removeEventListener('mouseup', handleGlobalEnd);
+      window.removeEventListener('mousemove', handleGlobalMove);
+      window.removeEventListener('touchend', handleGlobalEnd);
+      window.removeEventListener('touchcancel', handleGlobalEnd);
+      window.removeEventListener('touchmove', handleGlobalMove);
     };
   }, [isDraggingPlayhead, draggingHandle, selectionRange, duration, getTimeFromEvent, onSeek, onSetSelectionRange]);
 
@@ -289,11 +328,28 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
           {/* A-B Selection Range Box (The active clipping area) */}
           {selectionRange && duration > 0 && (
             <div
-              className="absolute top-5 bottom-0 border-2 border-dashed border-amber-400 bg-amber-400/15 z-30 pointer-events-none"
+              id="selection-range-box"
+              onMouseDown={(e) => {
+                // Drag the entire selection window
+                if ((e.target as HTMLElement).id === 'selection-handle-a' || (e.target as HTMLElement).id === 'selection-handle-b') return;
+                e.stopPropagation();
+                const time = getTimeFromEvent(e);
+                dragRangeAnchorRef.current = { startXTime: time, initialRange: { ...selectionRange } };
+                setDraggingHandle('range');
+              }}
+              onTouchStart={(e) => {
+                if ((e.target as HTMLElement).id === 'selection-handle-a' || (e.target as HTMLElement).id === 'selection-handle-b') return;
+                e.stopPropagation();
+                const time = getTimeFromEvent(e);
+                dragRangeAnchorRef.current = { startXTime: time, initialRange: { ...selectionRange } };
+                setDraggingHandle('range');
+              }}
+              className="absolute top-5 bottom-0 border-2 border-dashed border-amber-400 bg-amber-400/20 z-30 cursor-grab active:cursor-grabbing hover:bg-amber-400/25 transition-colors group/box"
               style={{
                 left: `${selectionStartPercent}%`,
                 width: `${selectionWidthPercent}%`,
               }}
+              title="انقر واسحب لتحريك كامل نافذة التحديد عبر الأغنية"
             >
               {/* Range label - clickable to play the selected song */}
               <button
@@ -306,12 +362,19 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
                     onSeek(selectionRange.start);
                   }
                 }}
-                className="absolute -top-5 left-1/2 -translate-x-1/2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full shadow-md whitespace-nowrap cursor-pointer pointer-events-auto flex items-center gap-1 transition-all z-40"
+                className="absolute -top-5 left-1/2 -translate-x-1/2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full shadow-md whitespace-nowrap cursor-pointer flex items-center gap-1 transition-all z-40"
                 title="انقر لتشغيل المقطع المحدد الآن"
               >
                 <Play className="w-2.5 h-2.5 fill-current shrink-0" />
                 <span>المقطع المحدد: {formatTime(selectionRange.start)} ⟷ {formatTime(selectionRange.end)} ({formatTime(selectionRange.end - selectionRange.start)})</span>
               </button>
+
+              {/* Move helper badge */}
+              <div className="absolute inset-x-0 bottom-1 flex justify-center pointer-events-none opacity-0 group-hover/box:opacity-100 transition-opacity">
+                <span className="text-[9px] bg-black/75 text-amber-300 font-mono px-1.5 py-0.2 rounded border border-amber-500/40">
+                  اسحب لنقل التحديد
+                </span>
+              </div>
 
               {/* Left Handle [A] */}
               <div
@@ -320,10 +383,15 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
                   e.stopPropagation();
                   setDraggingHandle('start');
                 }}
-                className="absolute -left-2 top-0 bottom-0 w-4 bg-emerald-500/80 hover:bg-emerald-400 cursor-ew-resize pointer-events-auto rounded-r flex items-center justify-center text-[9px] font-bold text-white shadow-lg z-40 transition-colors"
-                title={`نقطة البداية A: ${formatTime(selectionRange.start)}`}
+                onTouchStart={(e) => {
+                  e.stopPropagation();
+                  setDraggingHandle('start');
+                }}
+                className="absolute -left-3 top-0 bottom-0 w-6 bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-300 cursor-ew-resize rounded-r flex flex-col items-center justify-center text-[10px] font-extrabold text-white shadow-xl z-40 transition-colors select-none touch-none border-y border-r border-emerald-300/40"
+                title={`نقطة البداية A: ${formatTime(selectionRange.start)} (اسحب لتعديل البداية)`}
               >
-                A
+                <span>A</span>
+                <span className="text-[7px] opacity-75">◀</span>
               </div>
 
               {/* Right Handle [B] */}
@@ -333,10 +401,15 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
                   e.stopPropagation();
                   setDraggingHandle('end');
                 }}
-                className="absolute -right-2 top-0 bottom-0 w-4 bg-rose-500/80 hover:bg-rose-400 cursor-ew-resize pointer-events-auto rounded-l flex items-center justify-center text-[9px] font-bold text-white shadow-lg z-40 transition-colors"
-                title={`نقطة النهاية B: ${formatTime(selectionRange.end)}`}
+                onTouchStart={(e) => {
+                  e.stopPropagation();
+                  setDraggingHandle('end');
+                }}
+                className="absolute -right-3 top-0 bottom-0 w-6 bg-rose-500 hover:bg-rose-400 active:bg-rose-300 cursor-ew-resize rounded-l flex flex-col items-center justify-center text-[10px] font-extrabold text-white shadow-xl z-40 transition-colors select-none touch-none border-y border-l border-rose-300/40"
+                title={`نقطة النهاية B: ${formatTime(selectionRange.end)} (اسحب لتعديل النهاية)`}
               >
-                B
+                <span>B</span>
+                <span className="text-[7px] opacity-75">▶</span>
               </div>
             </div>
           )}

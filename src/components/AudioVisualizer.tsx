@@ -18,42 +18,8 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
   const animationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!audioElement) return;
-
-    // Set up AudioContext and AnalyserNode on first play interaction
-    const initAudioContext = () => {
-      if (audioCtxRef.current) return;
-      try {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        const ctx = new AudioCtx();
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 64; // smooth 32 bins
-        analyser.smoothingTimeConstant = 0.8;
-
-        const source = ctx.createMediaElementSource(audioElement);
-        source.connect(analyser);
-        analyser.connect(ctx.destination);
-
-        audioCtxRef.current = ctx;
-        analyserRef.current = analyser;
-        sourceNodeRef.current = source;
-      } catch (e) {
-        // May fail if CORS prevents MediaElementSource or already connected
-        console.warn('AudioContext visualization fallback', e);
-      }
-    };
-
-    const handlePlay = () => {
-      initAudioContext();
-      if (audioCtxRef.current?.state === 'suspended') {
-        audioCtxRef.current.resume();
-      }
-    };
-
-    audioElement.addEventListener('play', handlePlay);
-    return () => {
-      audioElement.removeEventListener('play', handlePlay);
-    };
+    // Gentle animated waveform that responds to playback state safely
+    // without hijacking or redirecting HTMLAudioElement master output (which can mute audio on mobile/CORS)
   }, [audioElement]);
 
   useEffect(() => {

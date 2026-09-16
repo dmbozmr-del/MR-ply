@@ -99,13 +99,31 @@ export default function App() {
     loadPhoneTracks().then((phoneTracks) => {
       if (phoneTracks && phoneTracks.length > 0) {
         setTracks((prev) => {
-          const map = new Map(prev.map((t) => [t.id, t]));
-          phoneTracks.forEach((pt) => {
-            if (!map.has(pt.id)) {
-              map.set(pt.id, pt);
+          const prevMap = new Map<string, AudioTrack>(prev.map((t) => [t.id, t]));
+          // Merge with fresh object URLs created by loadPhoneTracks()
+          const mergedPhoneTracks = phoneTracks.map((pt) => {
+            const existing = prevMap.get(pt.id);
+            if (existing) {
+              return {
+                ...existing,
+                src: pt.src, // CRITICAL: Use fresh valid Blob URL
+                originalFile: pt.originalFile || existing.originalFile,
+                segments:
+                  existing.segments && existing.segments.length > 0
+                    ? existing.segments
+                    : pt.segments,
+              };
             }
+            return pt;
           });
-          return Array.from(map.values());
+
+          // Keep non-phone tracks (e.g. sample demo or URL tracks)
+          const phoneIdSet = new Set(phoneTracks.map((p) => p.id));
+          const nonPhoneTracks = prev.filter(
+            (t) => !phoneIdSet.has(t.id) && t.fileType !== 'upload'
+          );
+
+          return [...mergedPhoneTracks, ...nonPhoneTracks];
         });
         setActiveTrackId((prev) => prev || phoneTracks[0].id);
       }
@@ -144,6 +162,9 @@ export default function App() {
     start: 0,
     end: currentTrack ? Math.min(180, currentTrack.duration || 180) : 0,
   }));
+
+  // Segment currently being edited in Slicer
+  const [editingSegment, setEditingSegment] = useState<TrackSegment | null>(null);
 
   // Waveform peaks cache
   const [waveformPeaks, setWaveformPeaks] = useState<number[] | undefined>(currentTrack?.waveform);
@@ -440,31 +461,60 @@ export default function App() {
 
     setActivePlaylistQueue(null);
 
-    if (targetTrack.id !== activeTrackId) {
+    const isDifferentTrack = targetTrack.id !== activeTrackId;
+    if (isDifferentTrack) {
       setActiveTrackId(targetTrack.id);
-      if (audioRef.current) {
-        audioRef.current.src = targetTrack.src;
-        audioRef.current.load();
-      }
+    }
+
+    const startPos = Math.max(0, song.startTime || 0);
+    setCurrentTime(startPos);
+    if (targetTrack.duration) {
+      setDuration(targetTrack.duration);
     }
 
     if (song.type === 'segment' && song.segmentId) {
       setActiveSegmentId(song.segmentId);
       setSelectionRange({ start: song.startTime, end: song.endTime });
-      if (audioRef.current) {
-        audioRef.current.currentTime = song.startTime;
-        audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
-      }
     } else {
       setActiveSegmentId(null);
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+    }
+
+    if (audioRef.current) {
+      const audio = audioRef.current;
+
+      const performPlay = () => {
+        try {
+          audio.currentTime = startPos;
+        } catch {
+          // ignore seek error if not seekable yet
+        }
+        audio
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch((err) => {
+            console.warn('Playback error', err);
+            setIsPlaying(false);
+            showToast('انقر لبدء تشغيل الصوت (سياسة المتصفح)');
+          });
+      };
+
+      if (audio.src !== targetTrack.src) {
+        audio.src = targetTrack.src;
+        if (audio.readyState >= 1) {
+          performPlay();
+        } else {
+          const onLoaded = () => {
+            performPlay();
+            audio.removeEventListener('loadedmetadata', onLoaded);
+          };
+          audio.addEventListener('loadedmetadata', onLoaded);
+          audio.load();
+        }
+      } else {
+        performPlay();
       }
     }
 
-    setCurrentTime(song.startTime || 0);
-    setDuration(targetTrack.duration);
     showToast(`تشغيل: ${song.title}`);
   };
 
@@ -568,8 +618,23 @@ export default function App() {
 
   // Save new identified segment
   const handleSaveSegment = (newSegData: Omit<TrackSegment, 'id' | 'createdAt'>) => {
+    if (!currentTrack) return;
+    const trackDuration = audioRef.current?.duration || duration || currentTrack.duration || 0;
+    const safeStart = Math.max(0, newSegData.startTime);
+    let safeEnd = newSegData.endTime;
+
+    if (trackDuration > 0) {
+      if (safeStart >= trackDuration) {
+        showToast('لا يمكن حفظ مقطع خارج مدة الأغنية الصوتية');
+        return;
+      }
+      safeEnd = Math.min(trackDuration, Math.max(safeStart + 0.5, safeEnd));
+    }
+
     const newSeg: TrackSegment = {
       ...newSegData,
+      startTime: safeStart,
+      endTime: safeEnd,
       id: `seg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       createdAt: Date.now(),
     };
@@ -578,45 +643,108 @@ export default function App() {
       prev.map((t) => {
         if (t.id === currentTrack.id) {
           const updated = [...t.segments, newSeg].sort((a, b) => a.startTime - b.startTime);
-          return { ...t, segments: updated };
+          const updatedTrack = { ...t, segments: updated };
+          savePhoneTrack(updatedTrack).catch(() => {});
+          return updatedTrack;
         }
         return t;
       })
     );
 
-    showToast(`تم حفظ الأغنية "${newSeg.title}" في القائمة!`);
+    showToast(`تم حفظ المقطع "${newSeg.title}" داخل الأغنية بنجاح`);
   };
 
   // Batch import segments
   const handleBatchImportSegments = (newSegments: TrackSegment[]) => {
+    if (!currentTrack) return;
+    const trackDuration = audioRef.current?.duration || duration || currentTrack.duration || 0;
+
+    // Filter and clamp strictly within track boundaries
+    const safeSegments = newSegments
+      .filter((s) => trackDuration <= 0 || s.startTime < trackDuration)
+      .map((s) => ({
+        ...s,
+        startTime: Math.max(0, s.startTime),
+        endTime: trackDuration > 0 ? Math.min(trackDuration, s.endTime) : s.endTime,
+      }));
+
     setTracks((prev) =>
       prev.map((t) => {
         if (t.id === currentTrack.id) {
-          const combined = [...t.segments, ...newSegments].sort(
+          const combined = [...t.segments, ...safeSegments].sort(
             (a, b) => a.startTime - b.startTime
           );
-          return { ...t, segments: combined };
+          const updatedTrack = { ...t, segments: combined };
+          savePhoneTrack(updatedTrack).catch(() => {});
+          return updatedTrack;
         }
         return t;
       })
     );
-    showToast(`تمت إضافة ${newSegments.length} فصول وأغاني جديدة بنجاح!`);
+    showToast(`تمت إضافة ${safeSegments.length} أجزاء داخل الأغنية بنجاح!`);
   };
 
-  // Edit segment
-  const handleEditSegment = (segment: TrackSegment) => {
+  // Edit segment: load it into selection editor with full edit controls
+  const handleEditSegment = (segment: TrackSegment, parentTrack?: AudioTrack | UnifiedSongItem) => {
+    if (parentTrack && parentTrack.id !== currentTrack?.id) {
+      setActiveTrackId(parentTrack.id);
+    }
+    setEditingSegment(segment);
     setSelectionRange({ start: segment.startTime, end: segment.endTime });
     handleSeek(segment.startTime);
     setActiveTab('slicer');
-    showToast(`تم تحميل نطاق "${segment.title}" للتعديل`);
+    showToast(`تم فتح أداة تعديل التحديد للمقطع "${segment.title}"`);
+  };
+
+  // Update existing segment
+  const handleUpdateSegment = (updatedSegment: TrackSegment) => {
+    if (!currentTrack) return;
+    const trackDuration = audioRef.current?.duration || duration || currentTrack.duration || 0;
+    const safeStart = Math.max(0, updatedSegment.startTime);
+    let safeEnd = updatedSegment.endTime;
+
+    if (trackDuration > 0) {
+      if (safeStart >= trackDuration) {
+        showToast('لا يمكن تعديل مقطع ليكون خارج مدة الأغنية الصوتية');
+        return;
+      }
+      safeEnd = Math.min(trackDuration, Math.max(safeStart + 0.5, safeEnd));
+    }
+
+    const finalSeg: TrackSegment = {
+      ...updatedSegment,
+      startTime: safeStart,
+      endTime: safeEnd,
+    };
+
+    setTracks((prev) =>
+      prev.map((t) => {
+        if (t.id === currentTrack.id) {
+          const updated = t.segments
+            .map((s) => (s.id === finalSeg.id ? finalSeg : s))
+            .sort((a, b) => a.startTime - b.startTime);
+          const updatedTrack = { ...t, segments: updated };
+          savePhoneTrack(updatedTrack).catch(() => {});
+          return updatedTrack;
+        }
+        return t;
+      })
+    );
+
+    setEditingSegment(null);
+    showToast(`تم تحديث المقطع "${finalSeg.title}" بنجاح!`);
   };
 
   // Delete segment
   const handleDeleteSegment = (id: string) => {
+    if (!currentTrack) return;
     setTracks((prev) =>
       prev.map((t) => {
         if (t.id === currentTrack.id) {
-          return { ...t, segments: t.segments.filter((s) => s.id !== id) };
+          const updated = t.segments.filter((s) => s.id !== id);
+          const updatedTrack = { ...t, segments: updated };
+          savePhoneTrack(updatedTrack).catch(() => {});
+          return updatedTrack;
         }
         return t;
       })
@@ -624,17 +752,30 @@ export default function App() {
     if (activeSegmentId === id) {
       setActiveSegmentId(null);
     }
-    showToast('تم حذف المقطع');
+    showToast('تم حذف المقطع من الأغنية');
   };
 
   // Add instant split marker from the timeline (e.g. at currentTime)
   const handleAddSplitPoint = (timestamp: number, title?: string) => {
-    const trackDuration = duration || currentTrack.duration || 180;
-    const time = Math.max(0, Math.min(trackDuration, Math.round(timestamp * 10) / 10));
+    if (!currentTrack) return;
+    const trackDuration = audioRef.current?.duration || duration || currentTrack.duration || 0;
+
+    if (trackDuration <= 0) {
+      showToast('يرجى الانتظار حتى تحميل الملف الصوتي أولاً لمعرفة مدته');
+      return;
+    }
+
+    const time = Math.round(timestamp * 10) / 10;
+    // Strictly prevent splitting outside the song
+    if (time <= 1 || time >= trackDuration - 1) {
+      showToast('لا يمكن التقسيم خارج حدود الأغنية (يجب أن يكون التقسيم داخل الأغنية)');
+      return;
+    }
+
     const currentSegments = [...currentTrack.segments].sort((a, b) => a.startTime - b.startTime);
 
     if (currentSegments.length === 0) {
-      // Create first two segments
+      // Create first two segments within song
       const seg1: TrackSegment = {
         id: `seg-${Date.now()}-1`,
         trackId: currentTrack.id,
@@ -658,10 +799,17 @@ export default function App() {
         createdAt: Date.now() + 1,
       };
       setTracks((prev) =>
-        prev.map((t) => (t.id === currentTrack.id ? { ...t, segments: [seg1, seg2] } : t))
+        prev.map((t) => {
+          if (t.id === currentTrack.id) {
+            const updatedTrack = { ...t, segments: [seg1, seg2] };
+            savePhoneTrack(updatedTrack).catch(() => {});
+            return updatedTrack;
+          }
+          return t;
+        })
       );
       setActiveSegmentId(seg2.id);
-      showToast(`تم تقسيم التسجيل: "اغنية 1" و "${seg2.title}" عند ${formatTime(time)}`);
+      showToast(`تم تقسيم التسجيل: "اغنية 1" و "${seg2.title}" داخل الأغنية`);
       return;
     }
 
@@ -694,10 +842,17 @@ export default function App() {
       ].sort((a, b) => a.startTime - b.startTime);
 
       setTracks((prev) =>
-        prev.map((t) => (t.id === currentTrack.id ? { ...t, segments: newSegmentsList } : t))
+        prev.map((t) => {
+          if (t.id === currentTrack.id) {
+            const updatedTrack = { ...t, segments: newSegmentsList };
+            savePhoneTrack(updatedTrack).catch(() => {});
+            return updatedTrack;
+          }
+          return t;
+        })
       );
       setActiveSegmentId(newSeg.id);
-      showToast(`تمت إضافة علامة "${newTitle}" عند ${formatTime(time)}`);
+      showToast(`تمت إضافة علامة "${newTitle}" داخل الأغنية عند ${formatTime(time)}`);
     } else {
       const newTitle = title || `اغنية ${currentSegments.length + 1}`;
       const newSeg: TrackSegment = {
@@ -712,14 +867,18 @@ export default function App() {
         createdAt: Date.now(),
       };
       setTracks((prev) =>
-        prev.map((t) =>
-          t.id === currentTrack.id
-            ? { ...t, segments: [...t.segments, newSeg].sort((a, b) => a.startTime - b.startTime) }
-            : t
-        )
+        prev.map((t) => {
+          if (t.id === currentTrack.id) {
+            const updatedList = [...t.segments, newSeg].sort((a, b) => a.startTime - b.startTime);
+            const updatedTrack = { ...t, segments: updatedList };
+            savePhoneTrack(updatedTrack).catch(() => {});
+            return updatedTrack;
+          }
+          return t;
+        })
       );
       setActiveSegmentId(newSeg.id);
-      showToast(`تمت إضافة "${newTitle}" عند ${formatTime(time)}`);
+      showToast(`تمت إضافة "${newTitle}" داخل الأغنية عند ${formatTime(time)}`);
     }
   };
 
@@ -1101,11 +1260,11 @@ export default function App() {
     ? currentTrack.segments.find((s) => s.id === activeSegmentId) || null
     : null;
 
-  // Flatten all songs & segments into unified library items
+  // Unified songs library: Each song represents its track, containing its segments internally
   const allSongs: UnifiedSongItem[] = useMemo(() => {
-    const list: UnifiedSongItem[] = [];
-    tracks.forEach((track) => {
-      list.push({
+    return tracks.map((track) => {
+      const segs = track.segments || [];
+      return {
         id: `track-${track.id}`,
         type: 'fullTrack',
         trackId: track.id,
@@ -1120,37 +1279,13 @@ export default function App() {
         folder: track.folder,
         hasLyrics: track.hasLyrics || !!track.lyrics,
         lyrics: track.lyrics,
-        tags: ['تسجيل كامل'],
+        tags: segs.length > 0 ? [`${segs.length} أجزاء مقسمة`] : ['تسجيل كامل'],
         isFavorite: false,
         addedAt: track.addedAt,
-      });
-
-      track.segments.forEach((seg) => {
-        list.push({
-          id: `seg-${seg.id}`,
-          type: 'segment',
-          trackId: track.id,
-          segmentId: seg.id,
-          title: seg.title,
-          artist: seg.artist || track.artist || 'فنان غير محدد',
-          album: seg.album || track.album || track.title,
-          duration: Math.max(1, seg.endTime - seg.startTime),
-          startTime: seg.startTime,
-          endTime: seg.endTime,
-          src: track.src,
-          coverArt: track.coverArt,
-          folder: track.folder,
-          hasLyrics: seg.hasLyrics || !!seg.lyrics || !!track.lyrics,
-          lyrics: seg.lyrics || track.lyrics,
-          color: seg.color,
-          tags: seg.tags,
-          notes: seg.notes,
-          isFavorite: seg.isFavorite,
-          addedAt: seg.createdAt,
-        });
-      });
+        segmentsCount: segs.length,
+        segments: segs,
+      };
     });
-    return list;
   }, [tracks]);
 
   // Filter and sort songs based on LarkHeader controls
@@ -1158,14 +1293,21 @@ export default function App() {
     const q = searchQuery.trim().toLowerCase();
     const filtered = allSongs.filter((song) => {
       if (!q) return true;
-      return (
+      const matchBasic =
         song.title.toLowerCase().includes(q) ||
         song.artist.toLowerCase().includes(q) ||
         song.album.toLowerCase().includes(q) ||
         (song.folder && song.folder.toLowerCase().includes(q)) ||
         (song.lyrics && song.lyrics.toLowerCase().includes(q)) ||
-        (song.tags && song.tags.some((t) => t.toLowerCase().includes(q)))
+        (song.tags && song.tags.some((t) => t.toLowerCase().includes(q)));
+
+      const matchSegments = song.segments?.some(
+        (s) =>
+          s.title.toLowerCase().includes(q) ||
+          (s.tags && s.tags.some((t) => t.toLowerCase().includes(q)))
       );
+
+      return matchBasic || Boolean(matchSegments);
     });
 
     return filtered.sort((a, b) => {
@@ -1361,6 +1503,10 @@ export default function App() {
         onEnded={handleEnded}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
+        onError={() => {
+          setIsPlaying(false);
+          showToast('تعذر تشغيل الملف الصوتي. يرجى اختيار ملف صالح');
+        }}
       />
 
       {/* Lark Player Top Navigation & Header */}
@@ -1435,6 +1581,7 @@ export default function App() {
               onOpenAddToPlaylist={(song) => setSongToAddToPlaylist(song)}
               onOpenSlicerForSong={handleOpenSlicerForSong}
               onDownloadSegment={(seg, parent) => handleDownloadSegment(seg, parent)}
+              onEditSegment={(seg, parentSong) => handleEditSegment(seg, parentSong)}
               onOpenImporter={() => setIsImporterOpen(true)}
               onLoadDemoSample={handleLoadDemoSample}
             />
@@ -1630,6 +1777,9 @@ export default function App() {
                       selectionRange={selectionRange}
                       segmentsCount={currentTrack.segments.length}
                       activeTrackTitle={currentTrack.title}
+                      editingSegment={editingSegment}
+                      onCancelEdit={() => setEditingSegment(null)}
+                      onUpdateSegment={handleUpdateSegment}
                       onSetSelectionRange={setSelectionRange}
                       onPreviewSelection={handlePreviewSelection}
                       onPreviewTransition={handlePreviewTransition}

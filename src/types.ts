@@ -100,6 +100,8 @@ export interface UnifiedSongItem {
   lyrics?: string;
   isFavorite?: boolean;
   addedAt: number;
+  segmentsCount?: number;
+  segments?: TrackSegment[];
 }
 
 export interface EqualizerBand {

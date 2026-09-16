@@ -7,19 +7,19 @@ export const DEMO_RECORDING_TRACK: AudioTrack = {
   title: '0309_260426',
   artist: 'تسجيل صوتي',
   album: 'Quick Share',
-  duration: 2711, // 45:11 exactly as in user recording
-  src: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=desert-mirage-111000.mp3',
+  duration: 372, // 06:12
+  src: '/audio/demo.mp3',
   fileType: 'sample',
   folder: 'My Recording - Quick Share',
   addedAt: Date.now() - 5000,
   hasLyrics: true,
-  lyrics: `تسجيل طويل: 0309_260426
-تم تقسيم هذا المقطع إلى أغاني مستقلة:
-- اغنية 1 (00:00 - 07:08)
-- اغنية 2 (07:08 - 18:00)
-- اغنية 3 (18:00 - 31:00)
-- اغنية 4 (31:00 - 45:11)
-يمكنك النقر مباشرة على علامات التقسيم في شريط التقدم للتنقل بين الأغاني.`,
+  lyrics: `تسجيل صوتي: 0309_260426
+تم تقسيم هذا المقطع إلى أجزاء داخل الأغنية:
+- الجزء 1 (00:00 - 01:25)
+- الجزء 2 (01:25 - 02:50)
+- الجزء 3 (02:50 - 04:30)
+- الجزء 4 (04:30 - 06:12)
+يمكنك النقر مباشرة على علامات التقسيم في شريط التقدم للتنقل بين الأجزاء دون فصلها خارج الأغنية.`,
   segments: [
     {
       id: 'seg-rec-1',
@@ -28,10 +28,10 @@ export const DEMO_RECORDING_TRACK: AudioTrack = {
       artist: 'تسجيل صوتي',
       album: '0309_260426',
       startTime: 0,
-      endTime: 428, // 07:08
+      endTime: 85,
       color: '#f97316',
       tags: ['تسجيل', 'اغنية 1'],
-      notes: 'الجزء الأول من التسجيل الطويل',
+      notes: 'الجزء الأول من التسجيل',
       isFavorite: true,
       createdAt: Date.now() - 4000,
     },
@@ -41,11 +41,11 @@ export const DEMO_RECORDING_TRACK: AudioTrack = {
       title: 'اغنية 2',
       artist: 'تسجيل صوتي',
       album: '0309_260426',
-      startTime: 428,
-      endTime: 1080,
+      startTime: 85,
+      endTime: 170,
       color: '#fb923c',
       tags: ['تسجيل', 'اغنية 2'],
-      notes: 'الجزء الثاني بعد علامة التقسيم',
+      notes: 'الجزء الثاني داخل الأغنية',
       isFavorite: false,
       createdAt: Date.now() - 3000,
     },
@@ -55,8 +55,8 @@ export const DEMO_RECORDING_TRACK: AudioTrack = {
       title: 'اغنية 3',
       artist: 'تسجيل صوتي',
       album: '0309_260426',
-      startTime: 1080,
-      endTime: 1860,
+      startTime: 170,
+      endTime: 270,
       color: '#f97316',
       tags: ['تسجيل', 'اغنية 3'],
       isFavorite: false,
@@ -68,8 +68,8 @@ export const DEMO_RECORDING_TRACK: AudioTrack = {
       title: 'اغنية 4',
       artist: 'تسجيل صوتي',
       album: '0309_260426',
-      startTime: 1860,
-      endTime: 2711,
+      startTime: 270,
+      endTime: 372,
       color: '#fb923c',
       tags: ['تسجيل', 'اغنية 4'],
       isFavorite: false,

@@ -16,6 +16,11 @@ import {
   Mic,
   Music2,
   Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Layers,
+  Tag,
+  Edit2,
 } from 'lucide-react';
 import { UnifiedSongItem, AudioTrack, TrackSegment } from '../types';
 import { formatTime } from '../utils/formatters';
@@ -29,6 +34,7 @@ interface LarkSongListProps {
   onOpenAddToPlaylist: (song: UnifiedSongItem) => void;
   onOpenSlicerForSong: (song: UnifiedSongItem) => void;
   onDownloadSegment?: (segment: TrackSegment, parentTrack: AudioTrack) => void;
+  onEditSegment?: (segment: TrackSegment, parentSong: UnifiedSongItem) => void;
   onOpenImporter?: () => void;
   onLoadDemoSample?: () => void;
 }
@@ -42,10 +48,25 @@ export const LarkSongList: React.FC<LarkSongListProps> = ({
   onOpenAddToPlaylist,
   onOpenSlicerForSong,
   onDownloadSegment,
+  onEditSegment,
   onOpenImporter,
   onLoadDemoSample,
 }) => {
   const [menuSongId, setMenuSongId] = useState<string | null>(null);
+  const [expandedSongIds, setExpandedSongIds] = useState<Set<string>>(new Set());
+
+  const toggleExpandSong = (songId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedSongIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(songId)) {
+        next.delete(songId);
+      } else {
+        next.add(songId);
+      }
+      return next;
+    });
+  };
 
   if (songs.length === 0) {
     return (
@@ -161,9 +182,9 @@ export const LarkSongList: React.FC<LarkSongListProps> = ({
         const isRowPlaying = isCurrent && isPlaying;
 
         return (
-          <div
-            key={song.id}
-            id={`lark-song-row-${song.id}`}
+          <React.Fragment key={song.id}>
+            <div
+              id={`lark-song-row-${song.id}`}
             onClick={() => onPlaySong(song)}
             className={`group relative px-3 py-2.5 sm:px-4 sm:py-3 rounded-2xl flex items-center justify-between gap-3 cursor-pointer transition-all duration-150 select-none ${
               isCurrent
@@ -244,6 +265,24 @@ export const LarkSongList: React.FC<LarkSongListProps> = ({
                   <span className="font-mono text-[11px] text-stone-400">
                     {formatTime(song.duration)}
                   </span>
+
+                  {/* Segments inside song badge */}
+                  {Boolean(song.segmentsCount && song.segmentsCount > 0) && (
+                    <button
+                      type="button"
+                      onClick={(e) => toggleExpandSong(song.id, e)}
+                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-orange-950/60 hover:bg-orange-900/80 text-orange-400 border border-orange-600/40 transition-colors cursor-pointer"
+                      title="عرض الأجزاء المقسمة داخل الأغنية"
+                    >
+                      <Layers className="w-3 h-3 text-orange-400" />
+                      <span>{song.segmentsCount} أجزاء</span>
+                      {expandedSongIds.has(song.id) ? (
+                        <ChevronUp className="w-3 h-3 text-orange-400" />
+                      ) : (
+                        <ChevronDown className="w-3 h-3 text-orange-400" />
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -302,6 +341,20 @@ export const LarkSongList: React.FC<LarkSongListProps> = ({
                       <span>تشغيل الأغنية</span>
                     </button>
 
+                    {Boolean(song.segmentsCount && song.segmentsCount > 0) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          toggleExpandSong(song.id, e);
+                          setMenuSongId(null);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl flex items-center gap-2.5 text-stone-200 hover:bg-[#2c241e] hover:text-orange-400 transition-colors"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-orange-400" />
+                        <span>الأجزاء داخل الأغنية ({song.segmentsCount})</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => {
@@ -323,7 +376,7 @@ export const LarkSongList: React.FC<LarkSongListProps> = ({
                       className="w-full px-3 py-2 rounded-xl flex items-center gap-2.5 text-stone-200 hover:bg-[#2c241e] hover:text-orange-400 transition-colors"
                     >
                       <Scissors className="w-3.5 h-3.5" />
-                      <span>صنع نغمة رنين / تقطيع</span>
+                      <span>تقطيع وتقسيم داخل الأغنية</span>
                     </button>
 
                     <button
@@ -342,6 +395,87 @@ export const LarkSongList: React.FC<LarkSongListProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Internal Segments Accordion (أجزاء داخل الأغنية دون فصلها خارج الأغنية) */}
+          {expandedSongIds.has(song.id) && Boolean(song.segments && song.segments.length > 0) && (
+            <div
+              className="mr-8 sm:mr-16 ml-2 sm:ml-4 mb-3 p-3 rounded-2xl bg-[#1a1410] border border-[#38281d] space-y-2 animate-fadeIn"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between text-[11px] text-stone-400 px-2 pb-1.5 border-b border-stone-800/80 font-bold">
+                <span className="flex items-center gap-1.5 text-orange-400">
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>الأجزاء المقسمة داخل الأغنية ({song.segments!.length}):</span>
+                </span>
+                <span className="text-[10px] text-stone-500">انقر للتشغيل أو التنقل الفوري</span>
+              </div>
+
+              <div className="space-y-1">
+                {song.segments!.map((seg, idx) => {
+                  const isThisSegActive =
+                    isPlaying && activeSongId === `seg-${seg.id}`;
+
+                  return (
+                    <div
+                      key={seg.id}
+                      onClick={() =>
+                        onPlaySong({
+                          ...song,
+                          type: 'segment',
+                          segmentId: seg.id,
+                          title: seg.title,
+                          startTime: seg.startTime,
+                          endTime: seg.endTime,
+                          duration: Math.max(1, seg.endTime - seg.startTime),
+                        })
+                      }
+                      className={`px-3 py-2 rounded-xl flex items-center justify-between gap-3 cursor-pointer transition-colors text-xs select-none ${
+                        isThisSegActive
+                          ? 'bg-orange-950/60 text-orange-400 border border-orange-500/40'
+                          : 'hover:bg-[#261d16] text-stone-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-6 h-6 rounded-lg bg-orange-600/20 text-orange-400 flex items-center justify-center text-[11px] font-bold shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="font-bold truncate">{seg.title}</span>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="font-mono text-[11px] text-stone-400">
+                          {formatTime(seg.startTime)} ⟷ {formatTime(seg.endTime)}
+                        </span>
+                        {onEditSegment && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onEditSegment(seg, song);
+                            }}
+                            className="w-7 h-7 rounded-full bg-stone-800 hover:bg-orange-600/30 text-stone-400 hover:text-orange-300 flex items-center justify-center transition-colors cursor-pointer"
+                            title="تعديل هذا المقطع ونطاقه الزمني"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                        )}
+                        <div
+                          className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors ${
+                            isThisSegActive
+                              ? 'bg-orange-500 text-white'
+                              : 'bg-stone-800 text-stone-300 hover:bg-orange-600 hover:text-white'
+                          }`}
+                        >
+                          <Play className="w-3 h-3 fill-current ml-0.5" />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </React.Fragment>
         );
       })}
     </div>
