@@ -43,7 +43,8 @@ import { LarkVideoView } from './components/LarkVideoView';
 import { LarkMiniPlayer } from './components/LarkMiniPlayer';
 import { EqualizerModal } from './components/EqualizerModal';
 import { PhoneAudioImporter } from './components/PhoneAudioImporter';
-import { savePhoneTrack, loadPhoneTracks } from './utils/phoneAudioStorage';
+import { EditSongModal } from './components/EditSongModal';
+import { savePhoneTrack, loadPhoneTracks, updatePhoneTrackMetadata } from './utils/phoneAudioStorage';
 import { extractAndDownloadSegment, generateWaveformPeaks } from './utils/audioExporter';
 import { formatTime } from './utils/formatters';
 import { SortField, SortOrder } from './types';
@@ -173,6 +174,8 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [isPhonePlayerOpen, setIsPhonePlayerOpen] = useState(false);
+  const [isEditSongModalOpen, setIsEditSongModalOpen] = useState(false);
+  const [songToEdit, setSongToEdit] = useState<UnifiedSongItem | TrackSegment | AudioTrack | null>(null);
   const [songToAddToPlaylist, setSongToAddToPlaylist] = useState<
     UnifiedSongItem | TrackSegment | AudioTrack | null
   >(null);
@@ -557,7 +560,7 @@ export default function App() {
     }
 
     audioRef.current.currentTime = start;
-    audioRef.current.play().then(() => setIsPlaying(true));
+    audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
 
     const durationMs = Math.max(500, (end - start) * 1000);
     previewStopTimeoutRef.current = window.setTimeout(() => {
@@ -589,7 +592,7 @@ export default function App() {
     }
 
     audioRef.current.currentTime = playStart;
-    audioRef.current.play().then(() => setIsPlaying(true));
+    audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
 
     previewStopTimeoutRef.current = window.setTimeout(() => {
       if (audioRef.current) {
@@ -696,6 +699,111 @@ export default function App() {
     showToast(`تم فتح أداة تعديل التحديد للمقطع "${segment.title}"`);
   };
 
+  // Open edit song modal for changing title, artist, album, cover art, and lyrics
+  const handleOpenEditSong = (song: UnifiedSongItem | AudioTrack | TrackSegment) => {
+    setSongToEdit(song);
+    setIsEditSongModalOpen(true);
+  };
+
+  // Save updated song/segment metadata with cover image
+  const handleSaveSongMetadata = async (
+    id: string,
+    updates: {
+      title: string;
+      artist: string;
+      album: string;
+      folder?: string;
+      coverArt?: string;
+      lyrics?: string;
+    }
+  ) => {
+    const isSegment = Boolean(
+      (songToEdit as UnifiedSongItem)?.type === 'segment' ||
+      (songToEdit as UnifiedSongItem)?.segmentId ||
+      (songToEdit as TrackSegment)?.startTime !== undefined
+    );
+    const parentTrackId = (songToEdit as UnifiedSongItem)?.trackId || id;
+    const segmentId = (songToEdit as UnifiedSongItem)?.segmentId || (songToEdit as TrackSegment)?.id;
+
+    setTracks((prev) =>
+      prev.map((t) => {
+        if (t.id === parentTrackId || t.id === id) {
+          if (isSegment && segmentId && segmentId !== t.id) {
+            const updatedSegments = (t.segments || []).map((seg) => {
+              if (seg.id === segmentId) {
+                return {
+                  ...seg,
+                  title: updates.title,
+                  artist: updates.artist,
+                  album: updates.album,
+                  folder: updates.folder,
+                  coverArt: updates.coverArt,
+                  lyrics: updates.lyrics,
+                  hasLyrics: Boolean(updates.lyrics?.trim()),
+                };
+              }
+              return seg;
+            });
+            const updatedTrack: AudioTrack = {
+              ...t,
+              segments: updatedSegments,
+            };
+            savePhoneTrack(updatedTrack).catch(console.warn);
+            updatePhoneTrackMetadata(t.id, { segments: updatedSegments }).catch(console.warn);
+            return updatedTrack;
+          }
+
+          // Full track update
+          const updatedTrack: AudioTrack = {
+            ...t,
+            title: updates.title,
+            artist: updates.artist,
+            album: updates.album,
+            folder: updates.folder,
+            coverArt: updates.coverArt,
+            lyrics: updates.lyrics,
+            hasLyrics: Boolean(updates.lyrics?.trim()),
+          };
+          savePhoneTrack(updatedTrack).catch(console.warn);
+          updatePhoneTrackMetadata(t.id, {
+            title: updates.title,
+            artist: updates.artist,
+            album: updates.album,
+            folder: updates.folder,
+            coverArt: updates.coverArt,
+            lyrics: updates.lyrics,
+            hasLyrics: Boolean(updates.lyrics?.trim()),
+          }).catch(console.warn);
+          return updatedTrack;
+        }
+        return t;
+      })
+    );
+
+    // Also update any playlist items that reference this track/segment so everything is synchronized
+    setPlaylists((prev) =>
+      prev.map((pl) => ({
+        ...pl,
+        items: pl.items.map((it) => {
+          if (it.id === id || it.trackId === id || (segmentId && it.segmentId === segmentId)) {
+            return {
+              ...it,
+              title: updates.title,
+              artist: updates.artist,
+              album: updates.album,
+              coverArt: updates.coverArt || it.coverArt,
+            };
+          }
+          return it;
+        }),
+      }))
+    );
+
+    setIsEditSongModalOpen(false);
+    setSongToEdit(null);
+    showToast('تم حفظ وتحديث بيانات الأغنية وصورة الغلاف بنجاح! 🎵');
+  };
+
   // Update existing segment
   const handleUpdateSegment = (updatedSegment: TrackSegment) => {
     if (!currentTrack) return;
@@ -771,6 +879,18 @@ export default function App() {
       showToast('لا يمكن التقسيم خارج حدود الأغنية (يجب أن يكون التقسيم داخل الأغنية)');
       return;
     }
+
+    // Stop and pause the audio immediately at the place of the split click
+    if (previewStopTimeoutRef.current) {
+      window.clearTimeout(previewStopTimeoutRef.current);
+      previewStopTimeoutRef.current = null;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = time;
+    }
+    setIsPlaying(false);
+    setCurrentTime(time);
 
     const currentSegments = [...currentTrack.segments].sort((a, b) => a.startTime - b.startTime);
 
@@ -1433,7 +1553,10 @@ export default function App() {
       ? activeSegment.album || currentTrack?.album || currentTrack?.title || ''
       : currentTrack?.album || currentTrack?.title || '';
 
-  const currentDisplayCover = currentTrack?.coverArt;
+  const currentDisplayCover =
+    activePlaylistQueue && activePlaylistQueue.items[activePlaylistQueue.currentIndex]?.coverArt
+      ? activePlaylistQueue.items[activePlaylistQueue.currentIndex].coverArt
+      : activeSegment?.coverArt || currentTrack?.coverArt;
   const currentDisplayColor = activeSegment?.color || '#ea580c';
   const currentDisplayNotes = activeSegment?.notes;
   const currentDisplayIsFavorite = activeSegment?.isFavorite;
@@ -1505,7 +1628,11 @@ export default function App() {
         onPause={() => setIsPlaying(false)}
         onError={() => {
           setIsPlaying(false);
-          showToast('تعذر تشغيل الملف الصوتي. يرجى اختيار ملف صالح');
+          // Only show toast if user actually had a currentTrack with valid src that failed
+          if (currentTrack?.src && audioRef.current?.error) {
+            console.warn('Audio playback error', audioRef.current.error);
+            showToast('تعذر تشغيل الملف الصوتي. يرجى اختيار ملف صالح');
+          }
         }}
       />
 
@@ -1582,6 +1709,7 @@ export default function App() {
               onOpenSlicerForSong={handleOpenSlicerForSong}
               onDownloadSegment={(seg, parent) => handleDownloadSegment(seg, parent)}
               onEditSegment={(seg, parentSong) => handleEditSegment(seg, parentSong)}
+              onEditSong={handleOpenEditSong}
               onOpenImporter={() => setIsImporterOpen(true)}
               onLoadDemoSample={handleLoadDemoSample}
             />
@@ -1743,6 +1871,11 @@ export default function App() {
                   onSetPointA={handleSetPointA}
                   onSetPointB={handleSetPointB}
                   onPlaySelection={handlePreviewSelection}
+                  onPauseAudio={() => {
+                    if (audioRef.current) audioRef.current.pause();
+                    setIsPlaying(false);
+                  }}
+                  onAddSplitPoint={handleAddSplitPoint}
                 />
 
                 {/* Main Audio Player Controls */}
@@ -1786,6 +1919,10 @@ export default function App() {
                       onSaveSegment={handleSaveSegment}
                       onDownloadDirectSegment={handleDownloadDirectSegment}
                       onBatchImportSegments={handleBatchImportSegments}
+                      onPauseAudio={() => {
+                        if (audioRef.current) audioRef.current.pause();
+                        setIsPlaying(false);
+                      }}
                       trackId={currentTrack.id}
                       isDownloading={isDownloading}
                     />
@@ -1901,6 +2038,13 @@ export default function App() {
           }
         }}
         onOpenEqualizer={() => setIsEqualizerOpen(true)}
+        onOpenEditMetadata={() => {
+          if (activeSegment) {
+            handleOpenEditSong(activeSegment);
+          } else if (currentTrack) {
+            handleOpenEditSong(currentTrack);
+          }
+        }}
         onOpenSlicer={() => {
           setIsPhonePlayerOpen(false);
           setActiveTab('slicer');
@@ -1939,57 +2083,57 @@ export default function App() {
       {showShortcutsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div
-            className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl relative"
+            className="bg-[#1c1714] border border-stone-800 rounded-2xl w-full max-w-md p-6 shadow-2xl relative"
             dir="rtl"
           >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-800 mb-4">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <HelpCircle className="w-4 h-4 text-indigo-400" />
+                <HelpCircle className="w-4 h-4 text-orange-400" />
                 اختصارات لوحة المفاتيح
               </h3>
               <button
                 type="button"
                 onClick={() => setShowShortcutsModal(false)}
-                className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800"
+                className="text-stone-400 hover:text-white text-xs px-2.5 py-1 rounded-lg bg-stone-800"
               >
                 إغلاق
               </button>
             </div>
 
             <div className="space-y-3 text-xs">
-              <div className="flex items-center justify-between py-1.5 border-b border-slate-800/60">
-                <span className="text-slate-300">تشغيل / إيقاف مؤقت</span>
-                <kbd className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 font-mono text-indigo-300">
+              <div className="flex items-center justify-between py-1.5 border-b border-stone-800/60">
+                <span className="text-stone-300">تشغيل / إيقاف مؤقت</span>
+                <kbd className="bg-stone-800 px-2 py-0.5 rounded border border-stone-700 font-mono text-orange-400">
                   المسافة (Space)
                 </kbd>
               </div>
-              <div className="flex items-center justify-between py-1.5 border-b border-slate-800/60">
-                <span className="text-slate-300">تعيين نقطة البداية [A] عند موضعك</span>
-                <kbd className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 font-mono text-emerald-400">
+              <div className="flex items-center justify-between py-1.5 border-b border-stone-800/60">
+                <span className="text-stone-300">تعيين نقطة البداية [A] عند موضعك</span>
+                <kbd className="bg-stone-800 px-2 py-0.5 rounded border border-stone-700 font-mono text-emerald-400">
                   A أو [
                 </kbd>
               </div>
-              <div className="flex items-center justify-between py-1.5 border-b border-slate-800/60">
-                <span className="text-slate-300">تعيين نقطة النهاية [B] عند موضعك</span>
-                <kbd className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 font-mono text-rose-400">
+              <div className="flex items-center justify-between py-1.5 border-b border-stone-800/60">
+                <span className="text-stone-300">تعيين نقطة النهاية [B] عند موضعك</span>
+                <kbd className="bg-stone-800 px-2 py-0.5 rounded border border-stone-700 font-mono text-rose-400">
                   B أو ]
                 </kbd>
               </div>
-              <div className="flex items-center justify-between py-1.5 border-b border-slate-800/60">
-                <span className="text-slate-300">تقديم 5 ثواني</span>
-                <kbd className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 font-mono text-slate-300">
+              <div className="flex items-center justify-between py-1.5 border-b border-stone-800/60">
+                <span className="text-stone-300">تقديم 5 ثواني</span>
+                <kbd className="bg-stone-800 px-2 py-0.5 rounded border border-stone-700 font-mono text-stone-300">
                   السهم الأيسر ←
                 </kbd>
               </div>
-              <div className="flex items-center justify-between py-1.5 border-b border-slate-800/60">
-                <span className="text-slate-300">تأخير 5 ثواني</span>
-                <kbd className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 font-mono text-slate-300">
+              <div className="flex items-center justify-between py-1.5 border-b border-stone-800/60">
+                <span className="text-stone-300">تأخير 5 ثواني</span>
+                <kbd className="bg-stone-800 px-2 py-0.5 rounded border border-stone-700 font-mono text-stone-300">
                   السهم الأيمن →
                 </kbd>
               </div>
               <div className="flex items-center justify-between py-1.5">
-                <span className="text-slate-300">تفعيل / إيقاف تكرار المقطع (Loop)</span>
-                <kbd className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 font-mono text-indigo-300">
+                <span className="text-stone-300">تفعيل / إيقاف تكرار المقطع (Loop)</span>
+                <kbd className="bg-stone-800 px-2 py-0.5 rounded border border-stone-700 font-mono text-orange-400">
                   L
                 </kbd>
               </div>
@@ -1998,10 +2142,23 @@ export default function App() {
         </div>
       )}
 
+      {/* Edit Song Metadata Modal */}
+      {isEditSongModalOpen && songToEdit && (
+        <EditSongModal
+          isOpen={isEditSongModalOpen}
+          onClose={() => {
+            setIsEditSongModalOpen(false);
+            setSongToEdit(null);
+          }}
+          song={songToEdit}
+          onSave={handleSaveSongMetadata}
+        />
+      )}
+
       {/* Floating Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-24 md:bottom-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 border border-indigo-500/40 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 backdrop-blur-md animate-fadeIn">
-          <Info className="w-4 h-4 text-indigo-400 shrink-0" />
+        <div className="fixed bottom-24 md:bottom-20 left-1/2 -translate-x-1/2 z-50 bg-[#1e1713]/95 border border-orange-500/50 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 backdrop-blur-md animate-fadeIn">
+          <Info className="w-4 h-4 text-orange-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}

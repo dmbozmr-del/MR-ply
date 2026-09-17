@@ -28,7 +28,7 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = ({
   currentTitle,
   currentArtist,
   currentCoverArt,
-  currentColor = '#6366f1',
+  currentColor = '#ea580c',
   onTogglePlay,
   onNext,
   onOpenFullPlayer,
@@ -39,13 +39,13 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = ({
     <div
       id="mobile-mini-player-bar"
       onClick={onOpenFullPlayer}
-      className="fixed bottom-16 md:bottom-4 left-1/2 -translate-x-1/2 z-40 w-[95%] max-w-xl bg-slate-900/95 hover:bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl backdrop-blur-md cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99] overflow-hidden"
+      className="fixed bottom-16 md:bottom-4 left-1/2 -translate-x-1/2 z-40 w-[95%] max-w-xl bg-[#1a120e]/95 hover:bg-[#231913] border border-[#3c2a1d] rounded-2xl shadow-2xl backdrop-blur-md cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99] overflow-hidden"
       dir="rtl"
     >
       {/* Top micro progress line */}
-      <div className="w-full h-1 bg-slate-800">
+      <div className="w-full h-1 bg-[#281c14]">
         <div
-          className="h-full bg-indigo-500 transition-all duration-200"
+          className="h-full bg-orange-500 transition-all duration-200"
           style={{ width: `${progressPercent}%` }}
         />
       </div>
@@ -53,7 +53,7 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = ({
       <div className="p-2.5 sm:p-3 flex items-center justify-between gap-3">
         {/* Left: Thumbnail & Song titles */}
         <div className="flex items-center gap-3 min-w-0">
-          <div className="relative w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-slate-700 bg-slate-950 flex items-center justify-center">
+          <div className="relative w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-[#3b2a1e] bg-[#120d09] flex items-center justify-center">
             {currentCoverArt ? (
               <img
                 src={currentCoverArt}
@@ -80,7 +80,7 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = ({
             <h4 className="text-xs sm:text-sm font-bold text-white truncate">
               {currentTitle || 'لا يوجد ملف قيد التشغيل'}
             </h4>
-            <p className="text-[11px] text-indigo-300 truncate">
+            <p className="text-[11px] text-orange-300/80 truncate">
               {currentArtist || 'اختر أغنية للاستماع'}
             </p>
           </div>
@@ -96,7 +96,7 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = ({
               e.stopPropagation();
               onTogglePlay(e);
             }}
-            className="w-9 h-9 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-md shadow-indigo-600/20 transition-transform active:scale-95 cursor-pointer"
+            className="w-9 h-9 rounded-full bg-gradient-to-l from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white flex items-center justify-center shadow-md shadow-orange-600/30 transition-transform active:scale-95 cursor-pointer"
             title={isPlaying ? 'إيقاف مؤقت' : 'تشغيل'}
           >
             {isPlaying ? (
@@ -114,7 +114,7 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = ({
               e.stopPropagation();
               onNext(e);
             }}
-            className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            className="p-2 rounded-full text-stone-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
             title="التالي"
           >
             <SkipForward className="w-4 h-4 fill-current" />
@@ -125,7 +125,7 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = ({
             id="mini-player-expand-btn"
             type="button"
             onClick={onOpenFullPlayer}
-            className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+            className="p-2 rounded-full bg-[#271b14] hover:bg-[#34241b] text-orange-400 transition-colors cursor-pointer border border-[#443022]"
             title="فتح مشغل الهاتف الكامل"
           >
             <ChevronUp className="w-4 h-4" />

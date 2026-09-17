@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { TrackSegment, SelectionRange } from '../types';
 import { formatTime } from '../utils/formatters';
-import { ZoomIn, ZoomOut, Flag, Play, Bookmark } from 'lucide-react';
+import { ZoomIn, ZoomOut, Flag, Play, Bookmark, Scissors } from 'lucide-react';
 
 interface WaveformTimelineProps {
   duration: number;
@@ -16,6 +16,8 @@ interface WaveformTimelineProps {
   onSetPointA: (time: number) => void;
   onSetPointB: (time: number) => void;
   onPlaySelection?: (start: number, end: number) => void;
+  onPauseAudio?: () => void;
+  onAddSplitPoint?: (timestamp: number, title?: string) => void;
 }
 
 export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
@@ -31,6 +33,8 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   onSetPointA,
   onSetPointB,
   onPlaySelection,
+  onPauseAudio,
+  onAddSplitPoint,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const scrollWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -39,6 +43,8 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
   const [draggingHandle, setDraggingHandle] = useState<'start' | 'end' | 'range' | null>(null);
+  const [isCreatingSelection, setIsCreatingSelection] = useState(false);
+  const dragSelectionStartRef = useRef<number | null>(null);
   const dragRangeAnchorRef = useRef<{ startXTime: number; initialRange: SelectionRange } | null>(null);
 
   // Generate synthetic waveform bars if not provided
@@ -88,40 +94,82 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Only if clicking waveform background
-    if (e.target !== containerRef.current && !(e.target as HTMLElement).classList.contains('waveform-bg')) {
+    const target = e.target as HTMLElement;
+    if (
+      target.id === 'selection-handle-a' ||
+      target.id === 'selection-handle-b' ||
+      target.closest('#selection-handle-a') ||
+      target.closest('#selection-handle-b') ||
+      target.closest('#selection-range-box button')
+    ) {
       return;
     }
+
+    if (duration <= 0) return;
+
     const time = getTimeFromEvent(e);
-    setIsDraggingPlayhead(true);
+    dragSelectionStartRef.current = time;
+    setIsCreatingSelection(true);
     onSeek(time);
+
+    // Place selection window starting at the clicked location
+    const currentSpan = selectionRange ? Math.max(10, selectionRange.end - selectionRange.start) : 60;
+    const newStart = Math.max(0, Math.min(duration - 0.5, time));
+    const newEnd = Math.min(duration, newStart + currentSpan);
+    onSetSelectionRange({ start: newStart, end: newEnd });
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.target !== containerRef.current && !(e.target as HTMLElement).classList.contains('waveform-bg')) {
+    const target = e.target as HTMLElement;
+    if (
+      target.id === 'selection-handle-a' ||
+      target.id === 'selection-handle-b' ||
+      target.closest('#selection-handle-a') ||
+      target.closest('#selection-handle-b') ||
+      target.closest('#selection-range-box button')
+    ) {
       return;
     }
+
+    if (duration <= 0) return;
+
     const time = getTimeFromEvent(e);
-    setIsDraggingPlayhead(true);
+    dragSelectionStartRef.current = time;
+    setIsCreatingSelection(true);
     onSeek(time);
+
+    const currentSpan = selectionRange ? Math.max(10, selectionRange.end - selectionRange.start) : 60;
+    const newStart = Math.max(0, Math.min(duration - 0.5, time));
+    const newEnd = Math.min(duration, newStart + currentSpan);
+    onSetSelectionRange({ start: newStart, end: newEnd });
   };
 
   useEffect(() => {
     const handleGlobalEnd = () => {
       setIsDraggingPlayhead(false);
+      setIsCreatingSelection(false);
+      dragSelectionStartRef.current = null;
       setDraggingHandle(null);
       dragRangeAnchorRef.current = null;
     };
 
     const handleGlobalMove = (e: MouseEvent | TouchEvent) => {
-      if (!isDraggingPlayhead && !draggingHandle) return;
-      if (e.cancelable && (draggingHandle || isDraggingPlayhead)) {
+      if (!isDraggingPlayhead && !draggingHandle && !isCreatingSelection) return;
+      if (e.cancelable && (draggingHandle || isDraggingPlayhead || isCreatingSelection)) {
         e.preventDefault();
       }
 
       const time = getTimeFromEvent(e);
 
-      if (isDraggingPlayhead) {
+      if (isCreatingSelection && dragSelectionStartRef.current !== null && duration > 0) {
+        const initialClick = dragSelectionStartRef.current;
+        if (Math.abs(time - initialClick) >= 0.25) {
+          const s = Math.max(0, Math.min(initialClick, time));
+          const en = Math.min(duration, Math.max(initialClick, time));
+          onSetSelectionRange({ start: s, end: Math.max(s + 0.5, en) });
+          onSeek(s);
+        }
+      } else if (isDraggingPlayhead) {
         onSeek(time);
       } else if (draggingHandle === 'start' && selectionRange && duration > 0) {
         const newStart = Math.min(time, selectionRange.end - 0.5);
@@ -186,7 +234,45 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
         </div>
 
         {/* Quick point A & B set buttons directly above timeline */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Prominent Select Song Button (تحديد الأغنية مع إيقاف الصوت عند موضع الضغط) */}
+          <button
+            id="timeline-select-song-btn"
+            type="button"
+            onClick={() => {
+              if (duration <= 0) return;
+              onPauseAudio?.();
+              const currentSpan = selectionRange ? Math.max(10, selectionRange.end - selectionRange.start) : 60;
+              const s = Math.max(0, Math.min(duration - 0.5, currentTime));
+              const en = Math.min(duration, s + currentSpan);
+              onSetSelectionRange({ start: s, end: en });
+              onSeek(s);
+            }}
+            className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-amber-950/40"
+            title="وضع التحديد وإيقاف الصوت فوراً عند موضع الاستماع الحالي لتعديله وحفظه كأغنية"
+          >
+            <Scissors className="w-3.5 h-3.5" />
+            <span>تحديد الأغنية هنا ({formatTime(currentTime)})</span>
+          </button>
+
+          {/* Quick Split button on Waveform Timeline (تقسيم هنا مع إيقاف الصوت عند موضع الضغط) */}
+          {onAddSplitPoint && (
+            <button
+              id="timeline-split-here-btn"
+              type="button"
+              onClick={() => {
+                if (duration <= 0) return;
+                onPauseAudio?.();
+                onAddSplitPoint(currentTime);
+              }}
+              className="text-xs px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 active:scale-95 text-white font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-orange-950/40"
+              title="تقسيم التسجيل هنا وإيقاف الصوت فوراً في مكان الضغط"
+            >
+              <Scissors className="w-3.5 h-3.5" />
+              <span>تقسيم هنا ({formatTime(currentTime)})</span>
+            </button>
+          )}
+
           <button
             id="timeline-set-a-btn"
             type="button"
@@ -456,8 +542,8 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
             <span>نطاق الأغنية المحددة للتصدير/الحفظ</span>
           </span>
         </div>
-        <span className="text-[11px] text-slate-400">
-          انقر فوق المخطط للانتقال، أو اسحب المقابض (A و B) لتحديد نطاق الأغنية بدقة.
+        <span className="text-[11px] text-amber-300 font-medium">
+          💡 انقر في أي مكان على المخطط لوضع التحديد فوراً، واسحب المقابض (A و B) لتعديل التحديد بدقة.
         </span>
       </div>
     </div>

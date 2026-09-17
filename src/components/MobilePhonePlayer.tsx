@@ -30,6 +30,7 @@ import {
   Check,
   Tag,
   ListMusic,
+  Camera,
 } from 'lucide-react';
 import { TrackSegment } from '../types';
 import { formatTime } from '../utils/formatters';
@@ -73,6 +74,7 @@ interface MobilePhonePlayerProps {
   onOpenAddToPlaylist?: () => void;
   onOpenEqualizer?: () => void;
   onOpenSlicer?: () => void;
+  onOpenEditMetadata?: () => void;
   onSelectSegment?: (segment: TrackSegment) => void;
   onAddSplitHere?: (timestamp: number, title?: string) => void;
   onDeleteSegment?: (segmentId: string) => void;
@@ -117,6 +119,7 @@ export const MobilePhonePlayer: React.FC<MobilePhonePlayerProps> = ({
   onOpenAddToPlaylist,
   onOpenEqualizer,
   onOpenSlicer,
+  onOpenEditMetadata,
   onSelectSegment,
   onAddSplitHere,
   onDeleteSegment,
@@ -130,6 +133,7 @@ export const MobilePhonePlayer: React.FC<MobilePhonePlayerProps> = ({
   // Split management states
   const [showSegmentsDrawer, setShowSegmentsDrawer] = useState(false);
   const [showQuickSplitModal, setShowQuickSplitModal] = useState(false);
+  const [splitAtTimestamp, setSplitAtTimestamp] = useState<number | null>(null);
   const [newSplitTitle, setNewSplitTitle] = useState('');
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -196,16 +200,35 @@ export const MobilePhonePlayer: React.FC<MobilePhonePlayerProps> = ({
   }, [sortedSegments, activeSegmentId, currentTime]);
 
   const handleOpenQuickSplit = () => {
+    // 1. Freeze the exact click timestamp
+    const targetTime = currentTime;
+    setSplitAtTimestamp(targetTime);
+
+    // 2. Stop audio immediately at the place of the click
+    if (audioElement && !audioElement.paused) {
+      audioElement.pause();
+    }
+    if (isPlaying) {
+      onTogglePlay();
+    }
+    onSeek(targetTime);
+
     setNewSplitTitle(`اغنية ${sortedSegments.length + 1}`);
     setShowQuickSplitModal(true);
     setShowOptionsMenu(false);
   };
 
   const handleConfirmSplit = () => {
+    const targetSplit = splitAtTimestamp !== null ? splitAtTimestamp : currentTime;
+    // Ensure audio remains stopped at the split location
+    if (audioElement && !audioElement.paused) {
+      audioElement.pause();
+    }
     if (onAddSplitHere) {
-      onAddSplitHere(currentTime, newSplitTitle.trim() || undefined);
+      onAddSplitHere(targetSplit, newSplitTitle.trim() || undefined);
     }
     setShowQuickSplitModal(false);
+    setSplitAtTimestamp(null);
   };
 
   const handleSaveRename = (segId: string) => {
@@ -283,7 +306,11 @@ export const MobilePhonePlayer: React.FC<MobilePhonePlayerProps> = ({
                 style={{ backgroundColor: currentColor }}
               />
 
-              <div className="relative w-full h-full rounded-3xl overflow-hidden shadow-2xl border border-white/10 flex items-center justify-center bg-[#251525]">
+              <div
+                onClick={() => onOpenEditMetadata && onOpenEditMetadata()}
+                className="relative w-full h-full rounded-3xl overflow-hidden shadow-2xl border border-white/10 flex items-center justify-center bg-[#251525] group cursor-pointer"
+                title={onOpenEditMetadata ? 'انقر لتعديل صورة الغلاف وتفاصيل الأغنية' : undefined}
+              >
                 {currentCoverArt ? (
                   <img
                     src={currentCoverArt}
@@ -308,6 +335,14 @@ export const MobilePhonePlayer: React.FC<MobilePhonePlayerProps> = ({
                         }`}
                       />
                     </div>
+                  </div>
+                )}
+
+                {/* Edit Cover Overlay Badge */}
+                {onOpenEditMetadata && (
+                  <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-[11px] font-bold text-white flex items-center gap-1.5 opacity-90 group-hover:opacity-100 transition-opacity">
+                    <Camera className="w-3.5 h-3.5 text-orange-400" />
+                    <span>تغيير الصورة</span>
                   </div>
                 )}
               </div>
@@ -350,11 +385,23 @@ export const MobilePhonePlayer: React.FC<MobilePhonePlayerProps> = ({
           <div className="flex items-center justify-between gap-3">
             {/* Title & Artist on the right (RTL layout) */}
             <div className="min-w-0 flex-1">
-              <h3 className="text-xl sm:text-2xl font-black text-white truncate tracking-tight">
-                {currentTitle}
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xl sm:text-2xl font-black text-white truncate tracking-tight">
+                  {currentTitle}
+                </h3>
+                {onOpenEditMetadata && (
+                  <button
+                    type="button"
+                    onClick={onOpenEditMetadata}
+                    className="p-1 rounded-full text-stone-400 hover:text-orange-400 hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
+                    title="تعديل اسم الأغنية والغلاف"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
               <p className="text-xs text-stone-400 font-medium truncate mt-0.5">
-                {currentArtist}
+                {currentArtist} {currentAlbum ? `• ${currentAlbum}` : ''}
               </p>
             </div>
 
@@ -389,6 +436,20 @@ export const MobilePhonePlayer: React.FC<MobilePhonePlayerProps> = ({
               {/* Dropdown Options Menu */}
               {showOptionsMenu && (
                 <div className="absolute top-full left-0 mt-2 w-52 bg-[#261526] border border-[#4a264a] rounded-2xl shadow-2xl p-2 z-50 text-xs space-y-1">
+                  {onOpenEditMetadata && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowOptionsMenu(false);
+                        onOpenEditMetadata();
+                      }}
+                      className="w-full text-right px-3 py-2 rounded-xl hover:bg-white/10 text-amber-300 font-bold flex items-center justify-between"
+                    >
+                      <span>تعديل الاسم والغلاف ✏️</span>
+                      <Edit2 className="w-3.5 h-3.5 text-orange-400" />
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onClick={handleOpenQuickSplit}
@@ -726,11 +787,14 @@ export const MobilePhonePlayer: React.FC<MobilePhonePlayerProps> = ({
                 </button>
               </div>
 
-              <p className="text-xs text-stone-300 mb-3">
+              <p className="text-xs text-stone-300 mb-1">
                 سيتم وضع علامة تقسيم برتقالية عند الموضع:{' '}
                 <strong className="text-orange-400 font-mono font-bold">
-                  {formatTime(currentTime, true)}
+                  {formatTime(splitAtTimestamp !== null ? splitAtTimestamp : currentTime, true)}
                 </strong>
+              </p>
+              <p className="text-[11px] text-emerald-400 font-medium mb-3 flex items-center gap-1">
+                <span>✓ تم إيقاف الصوت مؤقتاً عند موضع التقسيم بدقة</span>
               </p>
 
               <div className="space-y-3">

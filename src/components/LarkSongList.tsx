@@ -21,6 +21,7 @@ import {
   Layers,
   Tag,
   Edit2,
+  Camera,
 } from 'lucide-react';
 import { UnifiedSongItem, AudioTrack, TrackSegment } from '../types';
 import { formatTime } from '../utils/formatters';
@@ -35,6 +36,7 @@ interface LarkSongListProps {
   onOpenSlicerForSong: (song: UnifiedSongItem) => void;
   onDownloadSegment?: (segment: TrackSegment, parentTrack: AudioTrack) => void;
   onEditSegment?: (segment: TrackSegment, parentSong: UnifiedSongItem) => void;
+  onEditSong?: (song: UnifiedSongItem) => void;
   onOpenImporter?: () => void;
   onLoadDemoSample?: () => void;
 }
@@ -49,6 +51,7 @@ export const LarkSongList: React.FC<LarkSongListProps> = ({
   onOpenSlicerForSong,
   onDownloadSegment,
   onEditSegment,
+  onEditSong,
   onOpenImporter,
   onLoadDemoSample,
 }) => {
@@ -312,6 +315,18 @@ export const LarkSongList: React.FC<LarkSongListProps> = ({
                 <Star className={`w-4 h-4 ${song.isFavorite ? 'fill-current' : ''}`} />
               </button>
 
+              {/* Edit Song Details & Cover Art Button */}
+              {onEditSong && (
+                <button
+                  type="button"
+                  onClick={() => onEditSong(song)}
+                  className="p-2 rounded-full text-stone-500 hover:text-amber-400 hover:bg-[#2c241d] transition-colors cursor-pointer"
+                  title="تعديل اسم الأغنية والغلاف"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+              )}
+
               {/* Three Dots More Menu */}
               <div className="relative">
                 <button
@@ -329,6 +344,20 @@ export const LarkSongList: React.FC<LarkSongListProps> = ({
                     className="absolute left-0 top-full mt-1 w-52 bg-[#1f1915] border border-stone-700/80 rounded-2xl shadow-2xl p-1.5 z-50 animate-fadeIn text-xs"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    {onEditSong && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onEditSong(song);
+                          setMenuSongId(null);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl flex items-center gap-2.5 text-amber-300 hover:bg-[#2c241e] hover:text-orange-400 transition-colors font-bold"
+                      >
+                        <Edit2 className="w-3.5 h-3.5 text-orange-400" />
+                        <span>تعديل الاسم والغلاف ✏️</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => {

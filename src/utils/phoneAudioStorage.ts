@@ -109,6 +109,8 @@ export async function loadPhoneTracks(): Promise<AudioTrack[]> {
       let src = '';
       if (rec.blob) {
         src = URL.createObjectURL(rec.blob);
+      } else if (rec.fileType === 'sample') {
+        src = '/audio/demo.mp3';
       }
 
       return {
@@ -135,6 +137,37 @@ export async function loadPhoneTracks(): Promise<AudioTrack[]> {
   } catch (err) {
     console.warn('Could not load tracks from IndexedDB', err);
     return [];
+  }
+}
+
+/**
+ * Update metadata (title, artist, album, coverArt, lyrics, folder) of a stored track without altering its audio blob
+ */
+export async function updatePhoneTrackMetadata(
+  trackId: string,
+  updates: Partial<StoredTrackRecord>
+): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+
+    const existing: StoredTrackRecord | undefined = await new Promise((resolve, reject) => {
+      const req = store.get(trackId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    if (existing) {
+      const merged = { ...existing, ...updates };
+      await new Promise<void>((resolve, reject) => {
+        const req = store.put(merged);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    }
+  } catch (err) {
+    console.warn('Could not update track metadata in IndexedDB', err);
   }
 }
 

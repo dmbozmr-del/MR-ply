@@ -13,6 +13,7 @@ export interface TrackSegment {
   folder?: string;
   hasLyrics?: boolean;
   lyrics?: string;
+  coverArt?: string;
   createdAt: number;
 }
 

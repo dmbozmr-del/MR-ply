@@ -36,6 +36,7 @@ interface SegmentManagerProps {
   onSaveSegment: (segment: Omit<TrackSegment, 'id' | 'createdAt'>) => void;
   onDownloadDirectSegment: (start: number, end: number, title: string) => void;
   onBatchImportSegments: (segments: TrackSegment[]) => void;
+  onPauseAudio?: () => void;
   trackId: string;
   isDownloading: boolean;
 }
@@ -54,6 +55,7 @@ export const SegmentManager: React.FC<SegmentManagerProps> = ({
   onSaveSegment,
   onDownloadDirectSegment,
   onBatchImportSegments,
+  onPauseAudio,
   trackId,
   isDownloading,
 }) => {
@@ -225,6 +227,7 @@ export const SegmentManager: React.FC<SegmentManagerProps> = ({
   // Handle YouTube batch import
   const handleBatchImport = () => {
     if (!batchText.trim()) return;
+    onPauseAudio?.();
     const parsed = parseTimestampsText(batchText, duration, trackId);
     if (parsed.length > 0) {
       onBatchImportSegments(parsed);
@@ -236,6 +239,7 @@ export const SegmentManager: React.FC<SegmentManagerProps> = ({
   // Quick split by fixed interval (e.g. every 4 minutes)
   const handleQuickAutoSplit = (intervalMinutes: number) => {
     if (!duration || duration <= 0) return;
+    onPauseAudio?.();
     const intervalSecs = intervalMinutes * 60;
     const count = Math.ceil(duration / intervalSecs);
     const newSegments: TrackSegment[] = [];
